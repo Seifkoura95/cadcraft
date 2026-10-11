@@ -92,7 +92,7 @@ fn dsettings(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
 fn about(ctx: &egui::Context, open: &mut bool) {
     let t = Tokens::get();
     let tab_id = egui::Id::new("about_tab");
-    egui::Window::new("About CADCraft").open(open).default_size(vec2(640.0, 420.0)).collapsible(false).show(ctx, |ui| {
+    egui::Window::new(format!("About {}", crate::APP_NAME)).open(open).default_size(vec2(640.0, 420.0)).collapsible(false).show(ctx, |ui| {
         let mut tab = ui.data_mut(|d| d.get_temp::<u8>(tab_id)).unwrap_or(0);
         ui.horizontal(|ui| {
             for (i, l) in ["About", "Contributors", "Models"].iter().enumerate() {
@@ -106,6 +106,19 @@ fn about(ctx: &egui::Context, open: &mut bool) {
         match tab {
             1 => crate::credits::contributors_ui(ui),
             2 => crate::credits::models_ui(ui),
+            _ if cfg!(feature = "simplehub") => {
+                // SimpleHub build. CadCraft is MIT OR Apache-2.0; the licence asks for attribution,
+                // and the ArtCraft marks and community links are left out (they are not open source).
+                ui.heading(crate::APP_NAME);
+                ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
+                ui.add_space(4.0);
+                ui.label("2D computer-aided design and drafting for SimpleHub: DXF drawings with layers, blocks, dimensions and PDF plotting.");
+                ui.add_space(4.0);
+                ui.label("Simple CAD is built on CadCraft, an open source project by storytold, under the MIT and Apache 2.0 licences.");
+                ui.hyperlink_to("github.com/storytold/cadcraft", "https://github.com/storytold/cadcraft");
+                ui.add_space(6.0);
+                ui.label(RichText::new("Not affiliated with Autodesk, Inc.").small().color(t.text_faint));
+            }
             _ => {
                 ui.heading("CADCraft");
                 ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));

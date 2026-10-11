@@ -757,17 +757,9 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
         Space::Paper(n) => n.clone(),
     };
     match str_param(p, "path") {
-        Some(_path) => {
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                let path = _path;
-                let tmp = format!("{path}.cadcraft-tmp");
-                std::fs::write(&tmp, &bytes).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
-                std::fs::rename(&tmp, path).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
-                Ok(json!({ "path": path, "bytes": bytes.len(), "layout": layout }))
-            }
-            #[cfg(target_arch = "wasm32")]
-            Err(bad(cmd, "paths are not available on the web; omit `path` to get the PDF as base64 `data`"))
+        Some(path) => {
+            super::file::write_out(cmd, path, &bytes)?;
+            Ok(json!({ "path": path, "bytes": bytes.len(), "layout": layout }))
         }
         None => Ok(json!({ "data": base64_encode(&bytes), "bytes": bytes.len(), "layout": layout })),
     }
@@ -951,6 +943,7 @@ mod tests {
             read: |_, _| Err("no reader in tests".into()),
             write: |_, _| Err("no writer in tests".into()),
             plot: Some(fake_plot),
+            sink: None,
         });
         let mut s = session_with_model();
         if io().and_then(|h| h.plot).is_none() {

@@ -29,3 +29,7 @@ naga = { version = "30", features = ["wgsl-in", "glsl-out"] }
 [build-dependencies]
 serde_json = { workspace = true }
 toml = "1"
+
+[features]
+# SimpleHub build: user-facing name "Simple CAD", About dialog credits CadCraft.
+simplehub = []

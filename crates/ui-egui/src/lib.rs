@@ -31,6 +31,14 @@ use serde_json::{Value, json};
 
 pub use control::{ControlRequest, ControlResponse};
 
+/// The name shown to the user in titles, menus, the Start page and the About dialog.
+/// The `simplehub` feature builds the app as Simple CAD inside SimpleHub.
+pub const APP_NAME: &str = if cfg!(feature = "simplehub") { "Simple CAD" } else { "CADCraft" };
+
+/// Files that arrived asynchronously (`(name, bytes)`), opened on the next frame. Hosts that
+/// cannot block on a file picker (the web) push here and request a repaint.
+pub type Inbox = std::sync::Arc<std::sync::Mutex<Vec<(String, Vec<u8>)>>>;
+
 /// Persisted UI state (serde, so automation can read and set it).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -81,8 +89,15 @@ impl Default for UiState {
 /// Host services (file pickers, clipboard) injected by the app so this crate stays portable.
 #[derive(Default)]
 pub struct Services {
+    /// A blocking file picker returning a path (desktop).
     pub pick_open: Option<Box<dyn Fn() -> Option<String>>>,
+    /// A blocking save dialog: suggested name in, path (or name) out.
     pub pick_save: Option<Box<dyn Fn(&str) -> Option<String>>>,
+    /// Ask for a file without blocking: the bytes arrive later through `inbox`. The argument says
+    /// what the file is for (`"open"`: a drawing), so a host can filter what it offers. Used when
+    /// `pick_open` is `None`.
+    pub open_async: Option<Box<dyn Fn(&str)>>,
+    pub inbox: Option<Inbox>,
 }
 
 pub struct CadApp {
@@ -198,6 +213,7 @@ impl CadApp {
             self.styled = true;
         }
         self.drain_control(ctx);
+        self.drain_inbox();
         if !self.synthetic.is_empty() {
             ctx.request_repaint();
         }
@@ -209,6 +225,22 @@ impl CadApp {
             let p = f.path().to_string_lossy().to_string();
             if !p.is_empty() {
                 self.open_path(&p);
+            }
+        }
+    }
+
+    /// Open the files an asynchronous picker delivered (see [`Services::open_async`]).
+    fn drain_inbox(&mut self) {
+        let Some(inbox) = &self.services.inbox else { return };
+        let arrived: Vec<(String, Vec<u8>)> = std::mem::take(&mut *inbox.lock().unwrap_or_else(|e| e.into_inner()));
+        for (name, bytes) in arrived {
+            let data = cadcraft_engine::cmd::file::base64_encode(&bytes);
+            match self.run("open", json!({ "name": name, "data": data })) {
+                Ok(_) => {
+                    self.ui.start_tab = false;
+                    self.canvas.zoom_pending = true;
+                }
+                Err(e) => self.set_status(e),
             }
         }
     }

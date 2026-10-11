@@ -47,6 +47,7 @@ pub fn install_io() {
         read: |b, name| cadcraft_io::read(b, name).map_err(|e| e.to_string()),
         write: |d, name| cadcraft_io::write(d, name).map_err(|e| e.to_string()),
         plot: Some(|d, space, opts| cadcraft_io::plot(d, space, opts).map_err(|e| e.to_string())),
+        sink: None,
     });
 }
 
@@ -65,9 +66,11 @@ fn services() -> Services {
                 .add_filter("Drawing (DXF)", &["dxf"])
                 .add_filter("SVG", &["svg"])
                 .add_filter("PNG", &["png"])
+                .add_filter("PDF", &["pdf"])
                 .save_file()
                 .map(|p| p.to_string_lossy().to_string())
         })),
+        ..Default::default()
     }
 }
 

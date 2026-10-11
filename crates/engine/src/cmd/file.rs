@@ -18,7 +18,14 @@ pub struct IoHooks {
     pub write: fn(&Drawing, &str) -> std::result::Result<Vec<u8>, String>,
     /// PLOT / EXPORTPDF (optional: builds without a plotter report "not available").
     pub plot: Option<PlotHook>,
+    /// Where written files go when there is no file system to write to (the web): called with the
+    /// path the command was given and the bytes. With a sink, save, plot and wblock never touch
+    /// `std::fs`. `None` writes to the file system natively and fails on the web.
+    pub sink: Option<SinkHook>,
 }
+
+/// Takes the bytes a command wrote under a path (or just a file name).
+pub type SinkHook = fn(&str, &[u8]) -> std::result::Result<(), String>;
 
 static IO: OnceLock<IoHooks> = OnceLock::new();
 
@@ -27,6 +34,23 @@ pub fn set_io(h: IoHooks) {
 }
 pub fn io() -> Option<&'static IoHooks> {
     IO.get()
+}
+
+/// Write `bytes` to `path`: through the host's sink when it has one, else atomically to the file
+/// system (not available on the web).
+pub(crate) fn write_out(cmd: &str, path: &str, bytes: &[u8]) -> Result<()> {
+    if let Some(sink) = io().and_then(|h| h.sink) {
+        return sink(path, bytes).map_err(|e| bad(cmd, format!("{path}: {e}")));
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let tmp = format!("{path}.cadcraft-tmp");
+        std::fs::write(&tmp, bytes).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
+        std::fs::rename(&tmp, path).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
+        Ok(())
+    }
+    #[cfg(target_arch = "wasm32")]
+    Err(bad(cmd, "paths are not available on the web"))
 }
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -115,12 +139,7 @@ fn run_closeall(s: &mut Session, _p: &Value) -> Result<Value> {
 pub(crate) fn save_to(s: &mut Session, path: &str) -> Result<usize> {
     let hooks = io().ok_or_else(|| bad("save", "file formats are not available in this build"))?;
     let bytes = (hooks.write)(s.doc()?, path).map_err(|e| bad("save", e))?;
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let tmp = format!("{path}.cadcraft-tmp");
-        std::fs::write(&tmp, &bytes).map_err(|e| bad("save", format!("{path}: {e}")))?;
-        std::fs::rename(&tmp, path).map_err(|e| bad("save", format!("{path}: {e}")))?;
-    }
+    write_out("save", path, &bytes)?;
     let st = s.state_mut()?;
     st.saved = st.doc.clone();
     st.path = Some(path.to_string());

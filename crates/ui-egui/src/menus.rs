@@ -8,6 +8,11 @@ use crate::CadApp;
 /// The top-level menus, in order.
 pub const MENUS: &[&str] = &["File", "Edit", "View", "Insert", "Format", "Tools", "Draw", "Dimension", "Modify", "Window", "Help"];
 
+/// Labels that name the product (`&'static str`, so chosen at build time like [`crate::APP_NAME`]).
+const ABOUT_APP: &str = if cfg!(feature = "simplehub") { "About Simple CAD" } else { "About CADCraft" };
+const HELP_APP: &str = if cfg!(feature = "simplehub") { "Simple CAD Help" } else { "CADCraft Help" };
+const QUIT_APP: &str = if cfg!(feature = "simplehub") { "Quit Simple CAD" } else { "Quit CADCraft" };
+
 /// UI-only commands: (id, label, menu path, shortcut).
 pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.open", "Open...", &[], Some("Cmd+O")),
@@ -30,10 +35,10 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.dialog.qselect", "Quick Select...", &[], None),
     ("ui.dialog.parameters", "Parameters Manager", &["Window", "Parameters Manager"], None),
     ("ui.dialog.dsettings", "Drafting Settings...", &[], None),
-    ("ui.dialog.about", "About CADCraft", &["Help", "About CADCraft"], None),
-    ("ui.dialog.commands", "Command Reference", &["Help", "CADCraft Help"], Some("F1")),
+    ("ui.dialog.about", ABOUT_APP, &["Help", ABOUT_APP], None),
+    ("ui.dialog.commands", "Command Reference", &["Help", HELP_APP], Some("F1")),
     ("ui.noop", "", &[], None),
-    ("ui.quit", "Quit CADCraft", &[], Some("Cmd+Q")),
+    ("ui.quit", QUIT_APP, &[], Some("Cmd+Q")),
 ];
 
 pub fn is_ui_command(id: &str) -> bool {
@@ -48,9 +53,13 @@ pub fn run_ui_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Resu
     let no_path = params.is_null() || (params.get("path").is_none() && params.get("data").is_none());
     let r = match id {
         "ui.open" | "open" if no_path => {
-            let picked = app.services.pick_open.as_ref().and_then(|f| f());
-            if let Some(p) = picked {
-                app.open_path(&p);
+            if let Some(pick) = &app.services.pick_open {
+                if let Some(p) = pick() {
+                    app.open_path(&p);
+                }
+            } else if let Some(open) = &app.services.open_async {
+                // The bytes arrive through the inbox (see `CadApp::drain_inbox`).
+                open("open");
             }
             Ok(Value::Null)
         }
@@ -59,6 +68,17 @@ pub fn run_ui_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Resu
             let name = if name.contains('.') { name } else { format!("{name}.dxf") };
             if let Some(p) = app.services.pick_save.as_ref().and_then(|f| f(&name)) {
                 return Some(app.session.execute("saveas", &json!({ "path": p })).map_err(|e| e.to_string()));
+            }
+            Ok(Value::Null)
+        }
+        // From the menu or the tool bar (no path) these ask where the PDF goes; JSON calls with a
+        // `path` (or none, for base64 `data`) run the command directly.
+        "plot" | "exportpdf" if no_path && app.services.pick_save.is_some() => {
+            let name = save_name(app, "pdf");
+            if let Some(p) = app.services.pick_save.as_ref().and_then(|f| f(&name)) {
+                let mut params = if params.is_object() { params.clone() } else { json!({}) };
+                params["path"] = Value::String(p);
+                return Some(app.session.execute(id, &params).map_err(|e| e.to_string()));
             }
             Ok(Value::Null)
         }
@@ -161,6 +181,17 @@ pub fn run_ui_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Resu
         _ => return None,
     };
     Some(r)
+}
+
+/// The current drawing's name with its extension swapped for `ext` (`Drawing.ext` without a
+/// drawing), as suggested to a save dialog for exports.
+fn save_name(app: &CadApp, ext: &str) -> String {
+    let title = app.session.state().map(|s| s.title.clone()).unwrap_or_else(|_| "Drawing".into());
+    let stem = match title.rfind('.') {
+        Some(i) if i > 0 && title[i + 1..].chars().all(|c| c.is_ascii_alphanumeric()) => &title[..i],
+        _ => title.as_str(),
+    };
+    format!("{stem}.{ext}")
 }
 
 /// A menu entry.
